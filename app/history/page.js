@@ -7,7 +7,37 @@ export default function History(){
   const [data,setData]=useState([])
   const [filterMarket,setFilterMarket]=useState('All')
   const [filterResult,setFilterResult]=useState('All')
-  useEffect(()=>{ supabase.from('prediction_history').select('*').order('date',{ascending:false}).limit(500).then(r=>setData(r.data||[])) },[])
+  const [profitDaily, setProfitDaily] = useState([])
+  
+  useEffect(()=>{ 
+    async function load(){
+      const { data: settledBets } = await supabase
+        .from('predictions_today')
+        .select('*')
+        .not('is_won', 'is', null)
+        .order('match_date',{ascending:false})
+        .limit(500)
+      
+      const mapped = (settledBets||[]).map(r=>({
+        id: r.fixture_id + '_' + r.market,
+        date: r.match_date,
+        home_team: r.home_team,
+        away_team: r.away_team,
+        league: r.league_name,
+        market: r.market,
+        bookie_odds: r.bookie_odds,
+        result: r.is_won ? 'WON' : 'LOST',
+        actual_score: `${r.result_home_score}-${r.result_away_score}`,
+        profit: Number(r.profit||0) * 100,
+        kickoff_time: r.kickoff_time
+      }))
+      setData(mapped)
+
+      const { data: pd } = await supabase.from('profit_daily').select('*').order('date',{ascending:false}).limit(30)
+      setProfitDaily(pd||[])
+    }
+    load()
+  },[])
 
   const settled = data.filter(d=>d.result!=='PENDING')
   const totalProfit = settled.reduce((s,d)=>s+Number(d.profit||0),0)
@@ -17,10 +47,14 @@ export default function History(){
   const roi = totalBets? (totalProfit/(totalBets*100)*100).toFixed(1):0
   const last30 = settled.filter(d=> new Date(d.date) >= new Date(Date.now()-30*24*3600*1000)).reduce((s,d)=>s+Number(d.profit||0),0)
 
-  // Daily chart
-  const dailyMap={}
-  settled.forEach(d=>{ dailyMap[d.date]=(dailyMap[d.date]||0)+Number(d.profit) })
-  const chartData = Object.entries(dailyMap).map(([date,profit])=>({date,profit})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-14)
+  let chartData = []
+  if(profitDaily.length>0){
+    chartData = profitDaily.map(d=>({date: d.date, profit: Number(d.total_profit)*100})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-14)
+  } else {
+    const dailyMap={}
+    settled.forEach(d=>{ dailyMap[d.date]=(dailyMap[d.date]||0)+Number(d.profit) })
+    chartData = Object.entries(dailyMap).map(([date,profit])=>({date,profit})).sort((a,b)=>a.date.localeCompare(b.date)).slice(-14)
+  }
 
   const filtered = data.filter(d=>{
     if(filterMarket!=='All' && d.market!==filterMarket) return false
@@ -50,9 +84,9 @@ export default function History(){
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-auto">
         <table className="w-full text-sm"><thead className="text-zinc-500 text-xs"><tr><th className="p-3 text-left">Date</th><th className="text-left">Match</th><th>Market</th><th>Odds</th><th>Result</th><th>Profit</th></tr></thead>
-        <tbody>{filtered.map(r=><tr key={r.id} className="border-t border-zinc-800"><td className="p-3">{r.date}</td><td>{r.home_team} vs {r.away_team} <span className="text-xs text-zinc-500">{r.league}</span></td><td>{r.market}</td><td>{r.bookie_odds}</td><td className={r.result==='WON'?'text-green-400':r.result==='LOST'?'text-red-400':'text-zinc-500'}>{r.result} {r.actual_score||''}</td><td className={Number(r.profit)>=0?'text-green-400':'text-red-400'}>{r.profit} KES</td></tr>)}</tbody></table>
+        <tbody>{filtered.length===0 ? <tr><td colSpan={6} className="p-8 text-center text-zinc-500">No settled bets yet</td></tr> : filtered.map(r=><tr key={r.id} className="border-t border-zinc-800"><td className="p-3">{r.date}</td><td>{r.home_team} vs {r.away_team} <span className="text-xs text-zinc-500">{r.league}</span></td><td>{r.market}</td><td>{r.bookie_odds}</td><td className={r.result==='WON'?'text-green-400':r.result==='LOST'?'text-red-400':'text-zinc-500'}>{r.result} {r.actual_score||''}</td><td className={Number(r.profit)>=0?'text-green-400':'text-red-400'}>{r.profit} KES</td></tr>)}</tbody></table>
       </div>
       <p className="text-xs text-zinc-600 mt-4">We show LOSSES openly. Flat 100 KES staking. No fake stakes. Real results only.</p>
     </main>
   )
-    }
+  }
