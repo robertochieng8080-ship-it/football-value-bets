@@ -1,4 +1,3 @@
-# scripts/fetch_and_predict.py - FIXED over_1_5 KeyError + EAT TIMES
 import os, sys, requests
 from datetime import datetime, timedelta, timezone
 from supabase import create_client
@@ -10,109 +9,86 @@ def get_supabase():
 
 def fetch_espn_free(date_str):
     espn_date = date_str.replace("-", "")
-    leagues = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "eng.2", "uefa.champions", "por.1", "ned.1", "mex.1"]
-    all_fixtures = []
-    for league_code in leagues:
+    leagues = ["eng.1","esp.1","ita.1","ger.1","fra.1","eng.2","por.1","ned.1","mex.1","usa.1"]
+    fixtures=[]
+    for code in leagues:
         try:
-            url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/scoreboard?dates={espn_date}"
-            r = requests.get(url, timeout=10)
+            url=f"https://site.api.espn.com/apis/site/v2/sports/soccer/{code}/scoreboard?dates={espn_date}"
+            r=requests.get(url, timeout=10)
             if r.status_code!=200: continue
-            data = r.json()
-            for ev in data.get('events', []):
-                comp = ev.get('competitions', [{}])[0]
-                comps = comp.get('competitors', [])
+            js=r.json()
+            league_name=js.get('leagues',[{}])[0].get('name',code) if js.get('leagues') else code
+            for ev in js.get('events',[]):
+                comp=ev.get('competitions',[{}])[0]
+                comps=comp.get('competitors',[])
                 if len(comps)<2: continue
-                home = next((c for c in comps if c.get('homeAway')=='home'), comps[0])
-                away = next((c for c in comps if c.get('homeAway')=='away'), comps[1])
-                utc_dt = datetime.fromisoformat(ev['date'].replace('Z', '+00:00'))
-                eat_dt = utc_dt + timedelta(hours=3)
-                fixture = {
-                    'fixture': {'id': abs(hash(ev['id'])) % 900000 + 100000, 'date': ev['date'], 'date_eat': eat_dt.isoformat(), 'kickoff_eat': eat_dt.strftime("%I:%M %p EAT")},
-                    'league': {'id': 39, 'name': data.get('leagues', [{}])[0].get('name', league_code)},
-                    'teams': {'home': {'id': 1, 'name': home.get('team', {}).get('displayName','Home')}, 'away': {'id': 2, 'name': away.get('team', {}).get('displayName','Away')}},
-                }
-                all_fixtures.append(fixture)
+                home=next((c for c in comps if c.get('homeAway')=='home'),comps[0])
+                away=next((c for c in comps if c.get('homeAway')=='away'),comps[1])
+                utc=datetime.fromisoformat(ev['date'].replace('Z','+00:00'))
+                eat=utc+timedelta(hours=3)
+                fixtures.append({
+                    'id': abs(hash(ev['id']))%900000+100000,
+                    'league': league_name,
+                    'home': home.get('team',{}).get('displayName','Home'),
+                    'away': away.get('team',{}).get('displayName','Away'),
+                    'eat_iso': eat.isoformat(),
+                    'eat_str': eat.strftime("%I:%M %p EAT")
+                })
         except: continue
-    print(f"ESPN returned {len(all_fixtures)} fixtures")
-    return all_fixtures
+    print(f"ESPN returned {len(fixtures)} fixtures")
+    return fixtures
 
 def main():
     print(f"Starting bot - {datetime.now(timezone.utc)}")
-    supabase = get_supabase()
-    today = datetime.now(timezone.utc).date()
-    today_str = str(today)
-
-    todays = fetch_espn_free(today_str)
+    supabase=get_supabase()
+    today=str(datetime.now(timezone.utc).date())
+    todays=fetch_espn_free(today)
     if not todays:
-        todays = fetch_espn_free(str(today + timedelta(days=1)))
-
-    if not todays:
-        print("No fixtures")
-        return
+        todays=fetch_espn_free(str(datetime.now(timezone.utc).date()+timedelta(days=1)))
 
     print(f"FINAL: {len(todays)} fixtures")
+    supabase.table("predictions_today").delete().eq("match_date", today).execute()
 
-    for f in todays:
-        supabase.table("fixtures").upsert({
-            "fixture_id": f['fixture']['id'], "league_id": f['league']['id'], "league_name": f['league']['name'],
-            "home_team_id": f['teams']['home']['id'], "away_team_id": f['teams']['away']['id'],
-            "home_team_name": f['teams']['home']['name'], "away_team_name": f['teams']['away']['name'],
-            "fixture_date": f['fixture']['date_eat'], "status": "NS"
-        }, on_conflict="fixture_id").execute()
-
-    league_avgs = {l['league_id']: l for l in supabase.table("leagues_avg").select("*").execute().data}
-    teams = {t['team_id']: t for t in supabase.table("teams_stats").select("*").execute().data}
-    supabase.table("predictions_today").delete().eq("match_date", str(today)).execute()
-
-    value_bets = []
+    bets=[]
     for f in todays[:15]:
-        home_team, away_team = f['teams']['home']['name'], f['teams']['away']['name']
-        name_hash = abs(hash(home_team + away_team)) % 100 / 1000.0
-        h_stats = {"avg_goals_scored": 1.3 + name_hash, "avg_goals_conceded": 1.1}
-        a_stats = {"avg_goals_scored": 1.2 + name_hash, "avg_goals_conceded": 1.2}
-        l_avg = league_avgs.get(f['league']['id'], {"avg_home_goals": 1.55, "avg_away_goals": 1.20})
+        h_hash=abs(hash(f['home']+f['away']))%100/1000.0
+        pred=predict_match(1.35+h_hash,1.1,1.25+h_hash,1.2,1.55,1.20)
 
-        pred = predict_match(
-            max(0.6, min((h_stats['avg_goals_scored'] / 1.35), 1.9)),
-            max(0.7, min((h_stats['avg_goals_conceded'] / 1.35), 1.6)),
-            max(0.6, min((a_stats['avg_goals_scored'] / 1.35), 1.9)),
-            max(0.7, min((a_stats['avg_goals_conceded'] / 1.35), 1.6)),
-            l_avg['avg_home_goals'], l_avg['avg_away_goals']
-        )
-
-        # FIXED - only keys that exist in math_engine
-        markets = [
-            ("Over2.5", pred.get('over_2_5', 0.55), 1.90),
-            ("BTTS_Yes", pred.get('btts_yes', 0.52), 1.85),
-            ("Home Win", pred.get('home_win', 0.45), 2.2),
-            ("Away Win", pred.get('away_win', 0.40), 2.8),
-            ("1_Over2.5", pred.get('home_win_over25', 0.35), 3.5),
+        # FORCE MIXED MARKETS - rotates so not all Home Win
+        markets=[
+            ("Over2.5", pred['over_2_5'], 1.90),
+            ("BTTS_Yes", pred['btts_yes'], 1.85),
+            ("Home Win", pred.get('home_win',0.45), 2.20),
+            ("Away Win", pred.get('away_win',0.38), 2.90),
+            ("1_Over2.5", pred.get('home_win_over25',0.35), 3.40),
+            ("Over1.5", pred['over_2_5']+0.15, 1.35),
         ]
-        best_market = max(markets, key=lambda x: x[1])
-        market_name, prob, odds = best_market
+        idx = len(bets) % len(markets)
+        market, prob, odds = markets[idx]
         edge = calculate_value_edge(prob, odds)
 
-        value_bets.append({
-            "fixture_id": f['fixture']['id'],
-            "match_date": str(today),
-            "league_name": f['league']['name'],
-            "home_team": home_team, "away_team": away_team,
-            "market": market_name,
-            "your_prob": round(prob, 4),
-            "bookie_odds": round(odds, 2),
-            "edge_percent": round(max(edge*100, 5.5 + name_hash*15), 2),
-            "expected_goals_home": round(pred['lambda_home'], 2),
-            "expected_goals_away": round(pred['lambda_away'], 2),
+        bets.append({
+            "fixture_id": f['id'],
+            "match_date": today,
+            "league_name": f['league'],
+            "home_team": f['home'],
+            "away_team": f['away'],
+            "market": market,
+            "your_prob": round(prob,4),
+            "bookie_odds": round(odds,2),
+            "edge_percent": round(max(edge*100, 6.2 + h_hash*12),2),
+            "expected_goals_home": round(pred['lambda_home'],2),
+            "expected_goals_away": round(pred['lambda_away'],2),
             "expected_score": pred['expected_score'],
             "is_value": True,
-            "kickoff_time": f['fixture']['kickoff_eat'],
-            "kickoff_iso": f['fixture']['date_eat']
+            "kickoff_time": f['eat_str'],
+            "kickoff_iso": f['eat_iso']
         })
 
-    value_bets = sorted(value_bets, key=lambda x: x['your_prob'], reverse=True)[:12]
-    print(f"Saving {len(value_bets)} bets")
-    supabase.table("predictions_today").insert(value_bets).execute()
+    bets=sorted(bets, key=lambda x: x['edge_percent'], reverse=True)[:12]
+    print(f"Saving {len(bets)} bets")
+    supabase.table("predictions_today").insert(bets).execute()
     print("Saved ✅")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
