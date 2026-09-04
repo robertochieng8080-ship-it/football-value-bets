@@ -1,23 +1,31 @@
 name: Daily Value Bets Update
 on:
   schedule:
-    - cron: '0 3 * * *' # 3 AM UTC = 6 AM EAT Nairobi
-  workflow_dispatch: # Allows manual run from phone
-
+    - cron: '0 5 * * *' # 05:00 UTC = 08:00 EAT - morning bets
+    - cron: '0 12 * * *' # 12:00 UTC = 15:00 EAT - afternoon update
+  workflow_dispatch:
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        with: { python-version: '3.11' }
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Run Prediction Bot
+
+      - name: Update team stats (REAL form from football-data.org)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
-          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+        run: python scripts/update_stats.py
+
+      - name: Run Prediction Bot (REAL VALUE vs real bookie odds)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          THE_ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python scripts/fetch_and_predict.py
