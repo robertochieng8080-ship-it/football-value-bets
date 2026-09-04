@@ -1,5 +1,4 @@
 import os, requests, time
-from datetime import datetime
 from supabase import create_client
 from difflib import SequenceMatcher
 
@@ -16,8 +15,7 @@ def fuzzy(a,b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 def find_team_id(team_name):
-    leagues = ["PL","PD","BL1","SA","FL1","PPL","DED"]
-    for code in leagues:
+    for code in ["PL","PD","BL1","SA","FL1","PPL","DED"]:
         try:
             r = requests.get(f"{BASE}/competitions/{code}/teams", headers=headers(), timeout=15)
             if r.status_code!=200: continue
@@ -53,6 +51,7 @@ def main():
     print(f"Updating {len(unique)} teams")
 
     for team in list(unique)[:20]:
+        team_id_hash = abs(hash(team))%900000+100000
         scored,conceded=1.35,1.15
         if TOKEN:
             tid=find_team_id(team)
@@ -65,12 +64,14 @@ def main():
                 print(f"EST {team}: {scored}/{conceded}")
 
         try:
+            # FIX: conflict on team_id which is PRIMARY KEY - always works
             supabase.table("teams_stats").upsert({
-                "team_id": abs(hash(team))%900000+100000,
+                "team_id": team_id_hash,
                 "team_name": team,
                 "avg_goals_scored": float(scored),
                 "avg_goals_conceded": float(conceded)
-            }, on_conflict="team_name").execute()
+            }, on_conflict="team_id").execute()
+            print(f"Saved {team} ✅")
         except Exception as e:
             print(f"Upsert error {team}: {e}")
         time.sleep(6)
