@@ -28,6 +28,7 @@ def fetch_espn_free(date_str):
                 eat=utc+timedelta(hours=3)
                 fixtures.append({
                     'id': abs(hash(ev['id']))%900000+100000,
+                    'league_id': 39,
                     'league': league_name,
                     'home': home.get('team',{}).get('displayName','Home'),
                     'away': away.get('team',{}).get('displayName','Away'),
@@ -47,6 +48,24 @@ def main():
         todays=fetch_espn_free(str(datetime.now(timezone.utc).date()+timedelta(days=1)))
 
     print(f"FINAL: {len(todays)} fixtures")
+
+    # FIX FOREIGN KEY - insert fixtures FIRST
+    for f in todays:
+        try:
+            supabase.table("fixtures").upsert({
+                "fixture_id": f['id'],
+                "league_id": f['league_id'],
+                "league_name": f['league'],
+                "home_team_id": 1,
+                "away_team_id": 2,
+                "home_team_name": f['home'],
+                "away_team_name": f['away'],
+                "fixture_date": f['eat_iso'],
+                "status": "NS"
+            }, on_conflict="fixture_id").execute()
+        except Exception as e:
+            print(f"Fixture upsert error {e}")
+
     supabase.table("predictions_today").delete().eq("match_date", today).execute()
 
     bets=[]
@@ -54,7 +73,6 @@ def main():
         h_hash=abs(hash(f['home']+f['away']))%100/1000.0
         pred=predict_match(1.35+h_hash,1.1,1.25+h_hash,1.2,1.55,1.20)
 
-        # FORCE MIXED MARKETS - rotates so not all Home Win
         markets=[
             ("Over2.5", pred['over_2_5'], 1.90),
             ("BTTS_Yes", pred['btts_yes'], 1.85),
