@@ -47,33 +47,29 @@ def fetch_real_odds():
     all_odds={}
     leagues=["soccer_epl","soccer_spain_la_liga","soccer_germany_bundesliga","soccer_italy_serie_a","soccer_france_ligue_one"]
     for lg in leagues:
-        # FIX: Use correct markets - h2h and totals first, btts separate
-        for market_set in ["h2h,totals", "btts"]:
-            try:
-                url=f"https://api.the-odds-api.com/v4/sports/{lg}/odds/?regions=eu&markets={market_set}&oddsFormat=decimal&apiKey={ODDS_KEY}"
-                r=requests.get(url, timeout=15)
-                if r.status_code!=200:
-                    print(f"Odds {lg} {market_set}: {r.status_code} {r.text[:120]}")
-                    continue
-                for game in r.json():
-                    home=game.get('home_team',''); away=game.get('away_team','')
-                    for book in game.get('bookmakers',[])[:2]: # top 2 bookies
-                        for mk in book.get('markets',[]):
-                            if mk['key']=='h2h':
-                                for o in mk['outcomes']:
-                                    k=f"{home}__{away}__{o['name']}"
-                                    all_odds[k]=max(all_odds.get(k,0), float(o['price']))
-                            if mk['key']=='totals':
-                                for o in mk['outcomes']:
-                                    if 'Over' in o['name'] and float(o.get('point',0))==2.5:
-                                        all_odds[f"{home}__{away}__Over2.5"]=max(all_odds.get(f"{home}__{away}__Over2.5",0), float(o['price']))
-                            if mk['key']=='btts':
-                                for o in mk['outcomes']:
-                                    if o['name']=='Yes':
-                                        all_odds[f"{home}__{away}__BTTS_Yes"]=max(all_odds.get(f"{home}__{away}__BTTS_Yes",0), float(o['price']))
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"Odds error {lg} {market_set}: {e}")
+        # FIXED LOOP: only h2h,totals - btts not supported on free plan, causes 422
+        market_set = "h2h,totals"
+        try:
+            url=f"https://api.the-odds-api.com/v4/sports/{lg}/odds/?regions=eu&markets={market_set}&oddsFormat=decimal&apiKey={ODDS_KEY}"
+            r=requests.get(url, timeout=15)
+            if r.status_code!=200:
+                print(f"Odds {lg} {market_set}: {r.status_code} {r.text[:120]}")
+                continue
+            for game in r.json():
+                home=game.get('home_team',''); away=game.get('away_team','')
+                for book in game.get('bookmakers',[])[:2]:
+                    for mk in book.get('markets',[]):
+                        if mk['key']=='h2h':
+                            for o in mk['outcomes']:
+                                k=f"{home}__{away}__{o['name']}"
+                                all_odds[k]=max(all_odds.get(k,0), float(o['price']))
+                        if mk['key']=='totals':
+                            for o in mk['outcomes']:
+                                if 'Over' in o['name'] and float(o.get('point',0))==2.5:
+                                    all_odds[f"{home}__{away}__Over2.5"]=max(all_odds.get(f"{home}__{away}__Over2.5",0), float(o['price']))
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Odds error {lg} {market_set}: {e}")
         print(f"Odds {lg}: total so far {len(all_odds)}")
     print(f"Total real odds collected: {len(all_odds)}")
     return all_odds
@@ -149,7 +145,7 @@ def main():
                 "expected_goals_home": float(round(float(pred['lambda_home']),2)),
                 "expected_goals_away": float(round(float(pred['lambda_away']),2)),
                 "expected_score": str(pred['expected_score']),
-                "is_value": bool(edge>=0.05), # FIX: Python bool not numpy
+                "is_value": bool(edge>=0.05),
                 "kickoff_time": str(f['eat_str']),
                 "kickoff_iso": str(f['eat_iso'])
             })
@@ -166,7 +162,7 @@ def main():
                 fallback.append(b); seen.add(b['fixture_id'])
             if len(fallback)>=10: break
         for b in fallback:
-            b['is_value']=True # Python bool
+            b['is_value']=True
             b['edge_percent']=float(max(float(b['edge_percent']), 6.2))
         value_bets=fallback
 
