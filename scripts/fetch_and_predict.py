@@ -1,4 +1,4 @@
-# scripts/fetch_and_predict.py - Runs daily on GitHub Actions
+# scripts/fetch_and_predict.py - Runs daily on GitHub Actions - FULL VERSION WITH WEEKEND FIX
 import os
 import sys
 import time
@@ -138,11 +138,28 @@ def main():
             update_team_form(supabase, home_id, f['teams']['home']['name'], league_id, f['league']['name'], hg, ag, True)
             update_team_form(supabase, away_id, f['teams']['away']['name'], league_id, f['league']['name'], ag, hg, False)
 
-    # 2. FETCH TODAY'S FIXTURES
+    # 2. FETCH TODAY'S FIXTURES - FIXED FOR WEEKEND EMPTY DAYS
     print(f"Fetching fixtures for {today}...")
     todays = api_football_get("fixtures", {"date": str(today)})
+
     if not todays:
-        print("No fixtures today")
+        print(f"No fixtures for {today}, trying tomorrow...")
+        tomorrow = today + timedelta(days=1)
+        todays = api_football_get("fixtures", {"date": str(tomorrow)})
+        if todays:
+            print(f"Found {len(todays)} fixtures for tomorrow {tomorrow}")
+            today = tomorrow
+
+    if not todays:
+        day_after = today + timedelta(days=2)
+        print(f"Still empty, trying {day_after}...")
+        todays = api_football_get("fixtures", {"date": str(day_after)})
+        if todays:
+            print(f"Found {len(todays)} fixtures for {day_after}")
+            today = day_after
+
+    if not todays:
+        print("No fixtures in next 3 days - exiting")
         return
 
     for f in todays:
@@ -219,7 +236,7 @@ def main():
         supabase.table("predictions_today").insert(value_bets).execute()
         print("Saved to Supabase predictions_today ✅")
 
-        # === NEW FIX: ARCHIVE TO HISTORY FOR P/L DASHBOARD ===
+        # === ARCHIVE TO HISTORY FOR P/L DASHBOARD ===
         history_rows = []
         for b in value_bets:
             history_rows.append({
@@ -237,7 +254,6 @@ def main():
                 "profit": 0,
                 "expected_score": b["expected_score"]
             })
-        # Avoid duplicate on re-run today
         supabase.table("prediction_history").delete().eq("date", str(today)).eq("result", "PENDING").execute()
         supabase.table("prediction_history").insert(history_rows).execute()
         print(f"Archived {len(history_rows)} to prediction_history ✅")
