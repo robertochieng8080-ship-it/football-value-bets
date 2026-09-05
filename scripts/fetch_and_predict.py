@@ -47,7 +47,6 @@ def fetch_real_odds():
     all_odds={}
     leagues=["soccer_epl","soccer_spain_la_liga","soccer_germany_bundesliga","soccer_italy_serie_a","soccer_france_ligue_one"]
     for lg in leagues:
-        # FIXED LOOP: only h2h,totals - btts not supported on free plan, causes 422
         market_set = "h2h,totals"
         try:
             url=f"https://api.the-odds-api.com/v4/sports/{lg}/odds/?regions=eu&markets={market_set}&oddsFormat=decimal&apiKey={ODDS_KEY}"
@@ -111,7 +110,18 @@ def main():
         except Exception as e:
             print(f"Fixture error {e}")
 
-    supabase.table("predictions_today").delete().eq("match_date", today).execute()
+    # --- FIX: Dashboard shows TODAY ONLY ---
+    # Yesterday games stay in profit_daily / results_history / acca_history (P/L tracker)
+    try:
+        supabase.table("predictions_today").delete().gte("fixture_id", 0).execute()
+        print(f"Cleared predictions_today dashboard - will now insert only {today}")
+    except Exception as e:
+        print(f"Clear dashboard error (trying alt): {e}")
+        try:
+            supabase.table("predictions_today").delete().neq("match_date", "1900-01-01").execute()
+        except Exception as e2:
+            print(f"Alt clear also failed: {e2}")
+
     real_odds = fetch_real_odds()
     all_candidates=[]
 
@@ -129,9 +139,7 @@ def main():
             real_odd = find_real_odd(real_odds, f['home'], f['away'], market)
             if not real_odd:
                 real_odd = 2.2 if "Win" in market else 1.90
-
             edge = float(calculate_value_edge(float(prob), float(real_odd)))
-
             all_candidates.append({
                 "fixture_id": int(f['id']),
                 "match_date": str(today),
@@ -169,6 +177,6 @@ def main():
     value_bets=sorted(value_bets, key=lambda x: float(x['edge_percent']), reverse=True)[:12]
     print(f"Saving {len(value_bets)} bets with REAL odds")
     supabase.table("predictions_today").insert(value_bets).execute()
-    print("Saved ✅ REAL VALUE")
+    print("Saved ✅ REAL VALUE - dashboard now TODAY only")
 
 if __name__=="__main__": main()
